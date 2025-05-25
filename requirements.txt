@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+openai
+bs4
+requests
+python-dotenv
+faiss-cpu           # or faiss-gpu if needed
+tiktoken
+pydantic
+sentence-transformers
+PyJWT
+streamlit
+gradio
+httpx
+python-jose 
