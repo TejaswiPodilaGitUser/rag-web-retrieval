@@ -1,15 +1,15 @@
-from fastapi import APIRouter, Depends
+import sys
+import os
+from typing import List
 from app.scraper import scrape_text_from_url
 from app.chunker import chunk_text
 from app.embedder import get_embedding_local
 from app.vector_store import get_vector_store
-from app.auth import get_current_user
 
-router = APIRouter()
+# Optional: set the project root for imports if running standalone
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-@router.post("/api/v1/index")
-def index_url(data: dict, user: str = Depends(get_current_user)):
-    urls = data.get("url", [])
+def index_urls(urls: List[str]) -> dict:
     vector_db = get_vector_store()
     indexed = []
     failed = []
@@ -51,4 +51,16 @@ def index_url(data: dict, user: str = Depends(get_current_user)):
             print(f"❌ Exception processing URL {url}: {e}")
             failed.append({"url": url, "reason": str(e)})
 
-    return {"status": "success", "indexed_url": indexed, "failed": failed}
+    return {"status": "success", "indexed_urls": indexed, "failed": failed}
+
+if __name__ == "__main__":
+    # Example URLs to index (replace or extend this list)
+    urls_to_index = [
+        "https://en.wikipedia.org/wiki/ColBERT",
+        "https://en.wikipedia.org/wiki/Faiss",
+        # Add more URLs as needed
+    ]
+
+    result = index_urls(urls_to_index)
+    print("\nIndexing summary:")
+    print(result)
