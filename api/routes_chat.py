@@ -1,6 +1,9 @@
-from fastapi import APIRouter
+# routes_chat.py
+
+from fastapi import APIRouter, Depends
 from app.vector_store import get_vector_store
 from app.embedder import get_embedding_local
+from .routes_auth import verify_api_key  # import auth dependency
 import traceback
 import re
 
@@ -13,10 +16,8 @@ def extract_summary(docs, max_chars=600):
         text = doc.get("text", "").strip()
         if not text:
             continue
-        # Split into sentences for a cleaner snippet
         sentences = re.split(r'(?<=[.!?]) +', text)
         snippet = sentences[0] if sentences else text[:200]
-        # Try to add second sentence if snippet too short
         if len(snippet) < 100 and len(sentences) > 1:
             snippet += " " + sentences[1]
         snippet = snippet.strip()
@@ -27,7 +28,7 @@ def extract_summary(docs, max_chars=600):
             total_len += len(snippet)
     return " ".join(summary_parts)
 
-@router.post("/api/v1/chat")
+@router.post("/api/v1/chat", dependencies=[Depends(verify_api_key)])
 def chat_endpoint(payload: dict):
     try:
         messages = payload.get("messages", [])
@@ -65,19 +66,14 @@ def chat_endpoint(payload: dict):
                 }
             }
 
-        # Sort results by score descending
         sorted_results = sorted(results, key=lambda x: x.get("score", 0), reverse=True)
 
-        # Extract a concise summary from top 3 results
         summary = extract_summary(sorted_results[:3])
         if not summary:
             summary = "I found documents but couldn't extract a meaningful summary."
 
-        answer_text = (
-            f"Based on the information found in the documents, here is a summary:\n\n{summary}"
-        )
+        answer_text = f"Based on the information found in the documents, here is a summary:\n\n{summary}"
 
-        # Prepare citations (first 3)
         citations = [
             {
                 "text": doc.get("text", "")[:150].strip(),

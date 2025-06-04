@@ -1,101 +1,92 @@
 import streamlit as st
 import requests
-import json
+from chat_fallback import get_fallback_response, SAMPLE_CONVERSATIONS, normalize_text
+from rag_engine import fetch_rag_response
 
 def show_chat():
     st.header("💬 Chat with our AI Bot")
-    user_input = st.text_area("Enter your message:")
 
-    if st.button("Send"):
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    user_input = st.text_area("Enter your message:", key="user_input")
+    send_clicked = st.button("Send")
+
+    if send_clicked:
         if user_input.strip():
-            payload = json.dumps({
-                "messages": [{"role": "user", "content": user_input.strip()}]
-            })
+            user_text = user_input.strip()
+            st.session_state.messages.append({"role": "user", "content": user_text})
 
-            try:
-                response = requests.post(
-                    "http://localhost:8000/api/v1/chat",
-                    data=payload,
-                    headers={"Content-Type": "application/json"}
-                )
+            # Check sample responses first
+            normalized_input = normalize_text(user_text)
+            sample_response = next(
+                (conv["bot"] for conv in SAMPLE_CONVERSATIONS if normalize_text(conv["user"]) == normalized_input),
+                None
+            )
 
-                if response.status_code == 200:
-                    full_response = response.json()
+            if sample_response:
+                response = sample_response
+            else:
+                # Try RAG response
+                try:
+                    rag_data = fetch_rag_response(
+                        query=user_text,
+                        top_k=3,
+                        min_score=0.0,
+                        save_to_csv=False
+                    )
+                    answer = rag_data.get("answer", "")
+                    response = answer.strip() if isinstance(answer, str) else answer.get("content", "").strip()
+                except Exception:
+                    response = None
 
-                    # Show entire raw response for debugging
-                    with st.expander("🧪 API Debug Info", expanded=False):
-                        st.json(full_response)
+                # Use fallback if RAG is not confident
+                if not response or any(x in response.lower() for x in [
+                    "something went wrong", "based on the information found", "i'm sorry", "can't find", "don't know",
+                    "no relevant documents"
+                ]):
+                    response = get_fallback_response(user_text)
 
-                    result = full_response.get("response", {})
-
-                    # Extract and handle bot response
-                    answer = result.get("answer", {})
-                    if isinstance(answer, dict):
-                        bot_response = answer.get("content", "").strip()
-                    elif isinstance(answer, str):
-                        bot_response = answer.strip()
-                    else:
-                        bot_response = ""
-
-                    if not bot_response:
-                        st.warning("⚠️ No valid response received from the bot. Please try again.")
-                    else:
-                        st.markdown(f"**🧠 Bot:** {bot_response}")
-
-                    # Extract and show citations
-                    citations = result.get("citations", [])
-                    cleaned_citations = []
-                    seen_texts = set()
-
-                    for citation in citations:
-                        text = citation.get("text", "").strip()
-                        url = citation.get("url", None)
-
-                        # Skip invalid or repeated text
-                        if not text or "something went wrong" in text.lower() or text in seen_texts:
-                            continue
-                        seen_texts.add(text)
-                        cleaned_citations.append((text[:200], url))
-
-                    if cleaned_citations:
-                        st.subheader("🔗 Citations")
-                        for i, (text, url) in enumerate(cleaned_citations, start=1):
-                            if url:
-                                st.markdown(f"{i}. [{text}]({url})")
-                            else:
-                                st.markdown(f"{i}. {text}")
-                    else:
-                        st.info("ℹ️ No valid citations available.")
-
-                    # Feedback section
-                    st.subheader("📝 Provide Feedback")
-                    feedback_text = st.text_input("What do you think about the response?")
-                    feedback_rating = st.slider("Rate the response (1 = Poor, 5 = Excellent)", 1, 5, 3)
-
-                    if st.button("Submit Feedback"):
-                        feedback_payload = {
-                            "user_input": user_input,
-                            "bot_response": bot_response,
-                            "rating": feedback_rating,
-                            "feedback": feedback_text
-                        }
-
-                        try:
-                            feedback_res = requests.post(
-                                "http://localhost:8000/api/feedback",
-                                data=json.dumps(feedback_payload),
-                                headers={"Content-Type": "application/json"}
-                            )
-                            if feedback_res.status_code == 200:
-                                st.success("✅ Feedback submitted successfully!")
-                            else:
-                                st.error("❌ Failed to submit feedback.")
-                        except Exception as e:
-                            st.error(f"❌ Error submitting feedback: {e}")
-
-                else:
-                    st.error(f"❌ API returned error code {response.status_code}")
-            except requests.exceptions.RequestException as e:
-                st.error(f"❌ Connection error: {e}")
+            st.session_state.messages.append({"role": "assistant", "content": response})
         else:
             st.warning("⚠️ Please enter a message.")
+
+    # Display chat messages
+    for msg in st.session_state.messages:
+        if msg["role"] == "user":
+            st.markdown(f"**🧑 You:** {msg['content']}")
+        else:
+            st.markdown(f"**🤖 Bot:** {msg['content']}")
+
+    # Feedback Section
+    if st.session_state.messages:
+        st.subheader("📝 Provide Feedback")
+        feedback_text = st.text_input("What do you think about the response?")
+        feedback_rating = st.slider("Rate the response (1 = Poor, 5 = Excellent)", 1, 5, 3)
+
+        if st.button("Submit Feedback"):
+            last_user = next((msg["content"] for msg in reversed(st.session_state.messages) if msg["role"] == "user"), "")
+            last_bot = next((msg["content"] for msg in reversed(st.session_state.messages) if msg["role"] == "assistant"), "")
+
+            feedback_payload = {
+                "user_input": last_user,
+                "bot_response": last_bot,
+                "rating": feedback_rating,
+                "feedback": feedback_text
+            }
+
+            try:
+                feedback_res = requests.post(
+                    "http://localhost:8000/api/feedback",
+                    json=feedback_payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-api-key": "my-super-secret-key"
+                    }
+                )
+                if feedback_res.status_code == 200:
+                    st.success("✅ Feedback submitted successfully!")
+                else:
+                    st.error("❌ Failed to submit feedback.")
+            except Exception as e:
+                st.error(f"❌ Error submitting feedback: {e}")

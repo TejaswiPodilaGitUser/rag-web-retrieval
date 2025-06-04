@@ -4,16 +4,22 @@ from chat import show_chat
 from query import show_query
 
 st.set_page_config(page_title="AI Chatbot", layout="wide")
-st.title("🤖 AI-Powered Chatbot and Query Interface")
 
-# Sidebar Navigation
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Choose a page", ("Home", "Chat", "Query"))
+# Center the title using columns
+col1, col2, col3 = st.columns([1, 3, 1])
+with col2:
+    st.title("🤖 AI-Powered Chatbot and Query Interface")
 
-# Route to the selected page
-if page == "Home":
-    show_home()
-elif page == "Chat":
-    show_chat()
-elif page == "Query":
-    show_query()
+# Center tabs the same way
+col1, col2, col3 = st.columns([1, 3, 1])
+with col2:
+    tab1, tab2, tab3 = st.tabs(["🏠 Home", "💬 Chat", "🔍 Query"])
+
+    with tab1:
+        show_home()
+
+    with tab2:
+        show_chat()
+
+    with tab3:
+        show_query()

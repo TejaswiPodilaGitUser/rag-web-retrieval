@@ -33,14 +33,40 @@ def extract_summary(docs, max_chars=600):
 def highlight_snippet(doc_text, query, max_len=180):
     """
     Find the most relevant snippet in the document using fuzzy matching.
+    If best snippet is very short, append next sentence for better context.
     """
     sentences = re.split(r'(?<=[.!?]) +', doc_text.strip())
+    if not sentences:
+        return ""
+
     best_match = max(
         sentences,
         key=lambda s: difflib.SequenceMatcher(None, s.lower(), query.lower()).ratio(),
         default=""
     )
-    return best_match[:max_len].strip()
+    snippet = best_match
+
+    # Append next sentence if snippet is too short
+    try:
+        idx = sentences.index(best_match)
+        if len(best_match) < 50 and idx + 1 < len(sentences):
+            snippet += " " + sentences[idx + 1]
+    except ValueError:
+        pass
+
+    return snippet[:max_len].strip()
+
+def clean_text_fragment(text):
+    """
+    Clean trailing incomplete fragments from text by truncating
+    after the last complete sentence punctuation if needed.
+    """
+    text = text.strip()
+    if text and text[-1] not in ".!?":
+        last_punc = max(text.rfind('.'), text.rfind('!'), text.rfind('?'))
+        if last_punc != -1:
+            return text[:last_punc + 1]
+    return text
 
 @router.post("/api/query")
 async def query_endpoint(request: Request):
@@ -79,22 +105,33 @@ async def query_endpoint(request: Request):
     if not results:
         return {"answer": "📝 No relevant documents found.", "citations": []}
 
-    # Sort results
+    # Sort results by score descending
     sorted_results = sorted(results, key=lambda x: x.get("score", 0), reverse=True)
 
-    # Extract summary
+    # Filter out low similarity scores (threshold increased to 0.6)
+    score_threshold = 0.6
+    filtered_results = [doc for doc in sorted_results if doc.get("score", 0) >= score_threshold]
+
+    if not filtered_results:
+        return {"answer": "📝 No relevant documents found with sufficient relevance.", "citations": []}
+
+    sorted_results = filtered_results
+
+    # Extract summary and clean it
     summary = extract_summary(sorted_results[:top_k])
+    summary = clean_text_fragment(summary)
     if not summary:
         summary = "Found documents but could not extract a meaningful summary."
 
-    # Build citations with better snippet matching
-    citations = [
-        {
-            "text": highlight_snippet(doc.get("text", ""), query),
+    # Build citations with snippet and clean them
+    citations = []
+    for doc in sorted_results[:top_k]:
+        snippet = highlight_snippet(doc.get("text", ""), query)
+        snippet = clean_text_fragment(snippet)
+        citations.append({
+            "text": snippet,
             "url": doc.get("url", "")
-        }
-        for doc in sorted_results[:top_k]
-    ]
+        })
 
     # Optionally save to CSV
     csv_path = None

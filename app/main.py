@@ -3,11 +3,12 @@ from dotenv import load_dotenv
 import os
 import sys
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(Path(__file__).resolve().parent.parent, ".env"))
 
-# Add project root (one level up from this file) to sys.path
+# Add project root to sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
 
@@ -20,27 +21,30 @@ from api.routes_query import router as query_router
 # Import VectorStore loader
 from app.vector_store import get_vector_store
 
-# Initialize FastAPI app
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup code: load FAISS index
+    vector_store = get_vector_store()
+    vector_store._load()
+    print(f"📦 FAISS index loaded at startup with {vector_store.index.ntotal} vectors")
+    yield
+    print("🛑 Shutting down FastAPI app...")
+
+# ✅ Final app instantiation (only once)
 app = FastAPI(
     title="AI Search Backend",
     version="1.0",
-    description="FastAPI backend for semantic search and chat with feedback."
+    description="FastAPI backend for semantic search and chat with feedback.",
+    lifespan=lifespan
 )
 
-# Include API routers
+# ✅ Include API routers
 app.include_router(index_router)
 app.include_router(chat_router)
 app.include_router(feedback_router)
 app.include_router(query_router)
 
-# Root endpoint
+# ✅ Root endpoint
 @app.get("/")
 def read_root():
     return {"message": "🚀 Hello, World! The backend is running."}
-
-# Startup event to load FAISS index
-@app.on_event("startup")
-def load_faiss_index():
-    vector_store = get_vector_store()
-    vector_store._load()  # Ensure index and metadata are loaded
-    print(f"📦 FAISS index loaded at startup with {vector_store.index.ntotal} vectors")
